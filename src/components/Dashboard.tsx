@@ -1,276 +1,290 @@
-import React, { useState, useMemo } from 'react';
-import { Search, Filter, RotateCcw, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { dummyData } from '../utils/dummy';
-import ThemeToggle from './ThemeToggle';
-
-// Types definition
-export interface CampaignData {
-  date: string;
-  week: string;
-  editor: string;
-  painPoint: string;
-  product: string;
-  production: string;
-  adType: string;
-  format: string;
-  landingPage: string;
-  totalAssets: number;
-  hits: number;
-  week1: number;
-  week2: number;
-  week3: number;
-  week4: number;
-}
-
-interface FilterState {
-  week: string;
-  editor: string;
-  painPoint: string;
-  product: string;
-  production: string;
-  adType: string;
-  format: string;
-  landingPage: string;
-  purchaseThreshold: string;
-}
-
-interface FilterOptions {
-  [key: string]: string[];
-}
+import React, { useEffect, useMemo, useState } from "react";
+import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import ThemeToggle from "./ThemeToggle";
+import { SkeletonRows } from "./SkeletonRows";
 
 
+type AdWeekRow = {
+  ad_id: string;
+  ad_name_at_launch: string;
+  campaign_id: string;
+  campaign_name_at_launch: string;
+  cohort_week: string;
+  week_offset: number; // 1..4
+  hit_cum: number;     // 0/1
+  purchases: number;
+  revenue: number;
+  spend: number;
+};
 
-const FilterSelect: React.FC<{
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-}> = ({ label, value, onChange, options }) => (
-  <div className="space-y-2">
-    <label className="text-sm font-medium text-gray-700 dark:text-gray-200">{label}</label>
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full p-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                 bg-white text-sm text-gray-900
-                 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700"
-    >
-      {options.map((option) => (
-        <option key={option} value={option}>{option}</option>
-      ))}
-    </select>
-  </div>
-);
+type ApiPayload = {
+  generated_at: string;
+  count: number;
+  rows: AdWeekRow[];
+};
 
-const PerformanceCell: React.FC<{
-  current: number;
-  previous: number;
-  target: number;
-}> = ({ current, previous, target }) => {
-  const getTrend = () => (current > previous ? 'up' : current < previous ? 'down' : 'neutral');
-  const trend = getTrend();
-  const meetsTarget = current >= target;
+// ---------- small UI bits ----------
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { year: "2-digit", month: "short", day: "2-digit" });
 
-  const trendConfig = {
-    up:      { icon: TrendingUp,   color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-900/20' },
-    down:    { icon: TrendingDown, color: 'text-red-600 dark:text-red-400',     bg: 'bg-red-50 dark:bg-red-900/20' },
-    neutral: { icon: Minus,        color: 'text-gray-600 dark:text-gray-300',   bg: 'bg-gray-50 dark:bg-slate-800' },
-  };
+const PerformanceCell: React.FC<{ current: number; previous: number; target: number }> = ({
+  current,
+  previous,
 
-  const config = trendConfig[trend];
-  const Icon = config.icon;
-
+}) => {
+ current = Math.round(current * 10) / 10;
+previous = Math.round(previous * 10) / 10;
+  const trend = current > previous ? "up" : current < previous ? "down" : "neutral";
+ /*  const meets = current >= target; */
+  const cfg = {
+    up:      { icon: TrendingUp,   color: "text-green-600 dark:text-green-400", bg: "bg-green-50 dark:bg-green-900/20" },
+    down:    { icon: TrendingDown, color: "text-red-600 dark:text-red-400",     bg: "bg-red-50 dark:bg-red-900/20" },
+    neutral: { icon: Minus,        color: "text-gray-600 dark:text-gray-300",   bg: "bg-gray-50 dark:bg-slate-800" },
+  }[trend];
+  const Icon = cfg.icon;
   return (
-    <td className={`px-4 py-3 ${config.bg} ${meetsTarget ? 'border-l-4 border-green-400' : ''} dark:border-green-500`}>
+    <td className={`px-4 py-3 ${cfg.bg} `}>
       <div className="flex items-center justify-between">
-        <span className={`font-medium ${config.color}`}>{current.toFixed(1)}%</span>
-        <Icon className={`w-4 h-4 ${config.color}`} />
+        <span className={`font-medium ${cfg.color}`}>{isFinite(current) ? current.toFixed(1) : "0.0"}%</span>
+        <Icon className={`w-4 h-4 ${cfg.color}`} />
       </div>
     </td>
   );
 };
 
-const FacebookAdsDashboard: React.FC = () => {
-  const [filters, setFilters] = useState<FilterState>({
-    week: 'All',
-    editor: 'All',
-    painPoint: 'All',
-    product: 'All',
-    production: 'All',
-    adType: 'All',
-    format: 'All',
-    landingPage: 'All',
-    purchaseThreshold: 'All'
-  });
+// ---------- aggregated row rendered in table ----------
+type CohortRowView = {
+  cohortISO: string;  // original ISO, for stable sort
+  date: string;       // formatted
+  totalAssets: number;
+  hits: number;       // ~ wk4% * totalAssets
+  week1: number;
+  week2: number;
+  week3: number;
+  week4: number;
+};
 
-  const [searchTerm, setSearchTerm] = useState<string>('');
+const CohortDashboard: React.FC = () => {
+  const [raw, setRaw] = useState<AdWeekRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
 
-  // Generate filter options
-  const filterOptions: FilterOptions = useMemo(() => {
-    const getUniqueValues = (field: keyof CampaignData): string[] => {
-      const values = dummyData.map(item => String(item[field])).filter(Boolean);
-      return ['All', ...Array.from(new Set(values))].sort();
-    };
+  // filters
+  const [campaignFilter, setCampaignFilter] = useState<string>("All");
+  const [adFilter, setAdFilter] = useState<string>("All");
 
-    return {
-      week: getUniqueValues('week'),
-      editor: getUniqueValues('editor'),
-      painPoint: getUniqueValues('painPoint'),
-      product: getUniqueValues('product'),
-      production: getUniqueValues('production'),
-      adType: getUniqueValues('adType'),
-      format: getUniqueValues('format'),
-      landingPage: getUniqueValues('landingPage'),
-      purchaseThreshold: ['All', '10', '15', '20', '25']
-    };
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const res = await fetch("http://localhost:8000/api/ad-weeks"); // <- your API
+        if (!res.ok) throw new Error(`/api/ad-weeks ${res.status}`);
+        const json: ApiPayload = await res.json();
+        setRaw(json.rows || []);
+        setError(null);
+      } catch (e: any) {
+        setError(e?.message || "Failed to load");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  // Filter data
-  const filteredData: CampaignData[] = useMemo(() => {
-    return dummyData.filter(item => {
-      const matchesFilters = Object.entries(filters).every(([key, value]) => {
-        if (value === 'All') return true;
-        return String(item[key as keyof CampaignData]) === value;
-      });
+  // options for filters (from data)
+  const campaignOptions = useMemo(() => {
+    const set = new Set<string>(["All"]);
+    raw.forEach(r => { if (r.campaign_name_at_launch) set.add(r.campaign_name_at_launch); });
+    return Array.from(set).sort((a,b) => (a==="All"?-1: b==="All"?1 : a.localeCompare(b)));
+  }, [raw]);
 
-      const matchesSearch = searchTerm === '' || 
-        Object.values(item).some(value => 
-          String(value).toLowerCase().includes(searchTerm.toLowerCase())
-        );
+  const adOptions = useMemo(() => {
+    const set = new Set<string>(["All"]);
+    raw.forEach(r => { if (r.ad_name_at_launch) set.add(r.ad_name_at_launch); });
+    return Array.from(set).sort((a,b) => (a==="All"?-1: b==="All"?1 : a.localeCompare(b)));
+  }, [raw]);
 
-      return matchesFilters && matchesSearch;
+  // apply filters BEFORE aggregation
+  const filtered = useMemo(() => {
+    return raw.filter(r => {
+      const okCampaign = campaignFilter === "All" || r.campaign_name_at_launch === campaignFilter;
+      const okAd = adFilter === "All" || r.ad_name_at_launch === adFilter;
+      return okCampaign && okAd;
     });
-  }, [filters, searchTerm]);
+  }, [raw, campaignFilter, adFilter]);
 
-  // Calculate totals
+const addDays = (iso: string, days: number) => {
+  const d = new Date(iso + "T00:00:00Z"); // treat cohort_week as UTC midnight
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+};
+const isOnOrAfterToday = (d: Date) => {
+  const today = new Date();
+  const t = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  return d.getTime() <= t.getTime();
+};
+
+// aggregate ad-week rows → cohort grid (future weeks = 0)
+const view: CohortRowView[] = useMemo(() => {
+  if (filtered.length === 0) return [];
+
+  // helpers (local so the snippet is self-contained)
+  const addDaysISO = (iso: string, days: number) => {
+    const d = new Date(iso + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + days);
+    return d;
+  };
+  const isOnOrBeforeToday = (d: Date) => d <= new Date();
+
+  // group by cohort_week
+  const byCohort = new Map<string, AdWeekRow[]>();
+  for (const r of filtered) {
+    const arr = byCohort.get(r.cohort_week) || [];
+    arr.push(r);
+    byCohort.set(r.cohort_week, arr);
+  }
+
+  const out: CohortRowView[] = [];
+
+  for (const [cohort, arr] of byCohort.entries()) {
+    // denominator = all unique ads in the cohort
+    const adSet = new Set(arr.map(x => x.ad_id));
+    const totalAssets = adSet.size || 1; // guard against /0
+
+    // which weeks are eligible (boundary reached)?
+    const eligible: Record<1|2|3|4, boolean> = {1:false,2:false,3:false,4:false};
+    ( [1,2,3,4] as const ).forEach(k => {
+      const boundary = addDaysISO(cohort, 7 * k); // week k closes at +7k
+      eligible[k] = isOnOrBeforeToday(boundary);
+    });
+
+    // Build cumulative hit sets per week by *carrying forward* previous hits,
+    // so missing rows in later weeks don't lose already-hit ads.
+    const cumSets: Record<1|2|3|4, Set<string>> = {1:new Set(),2:new Set(),3:new Set(),4:new Set()};
+    let prev = new Set<string>();
+
+    ( [1,2,3,4] as const ).forEach(wk => {
+      const wkRows = arr.filter(x => x.week_offset === wk && x.hit_cum === 1);
+      const thisWk = new Set(prev); // start from previous cumulative
+      for (const r of wkRows) thisWk.add(r.ad_id);
+      cumSets[wk] = thisWk;
+      prev = thisWk;
+    });
+
+    // Cumulative counts (respect eligibility; future weeks treated as 0)
+    const c1 = eligible[1] ? cumSets[1].size : 0;
+    const c2 = eligible[2] ? cumSets[2].size : 0;
+    const c3 = eligible[3] ? cumSets[3].size : 0;
+    const c4 = eligible[4] ? cumSets[4].size : 0;
+
+    // Incremental "hike" per week (counts), never negative
+    const inc1 = c1;
+    const inc2 = Math.max(c2 - c1, 0);
+    const inc3 = Math.max(c3 - c2, 0);
+    const inc4 = Math.max(c4 - c3, 0);
+
+    // Convert to percentages for your cells
+   const p1 = Math.round((c1 / totalAssets) * 1000) / 10;
+const p2 = Math.round((c2 / totalAssets) * 1000) / 10;
+const p3 = Math.round((c3 / totalAssets) * 1000) / 10;
+const p4 = Math.round((c4 / totalAssets) * 1000) / 10;
+
+    // Total hits = cumulative count at latest eligible week
+    const latestHits = eligible[4] ? c4 : eligible[3] ? c3 : eligible[2] ? c2 : eligible[1] ? c1 : 0;
+
+    out.push({
+      cohortISO: cohort,
+      date: fmtDate(cohort),
+      totalAssets,
+      hits: latestHits,         // exact integer, not pct * denom
+      week1: eligible[1] ? p1 : 0,  // weekly *increment* %
+      week2: eligible[2] ? p2 : 0,
+      week3: eligible[3] ? p3 : 0,
+      week4: eligible[4] ? p4 : 0,
+    });
+  }
+
+  out.sort((a, b) => b.cohortISO.localeCompare(a.cohortISO));
+  return out;
+}, [filtered]);
+
+
+
+  // top cards
   const totals = useMemo(() => {
-    if (filteredData.length === 0) {
-      return { totalAssets: 0, hits: 0, week1: 0, week2: 0, week3: 0, week4: 0 };
-    }
-    
+    if (view.length === 0) return { totalAssets: 0, hits: 0, week1: 0, week2: 0, week3: 0, week4: 0 };
+    const n = view.length;
     return {
-      totalAssets: filteredData.reduce((sum, item) => sum + item.totalAssets, 0),
-      hits: filteredData.reduce((sum, item) => sum + item.hits, 0),
-      week1: filteredData.reduce((sum, item) => sum + item.week1, 0) / filteredData.length,
-      week2: filteredData.reduce((sum, item) => sum + item.week2, 0) / filteredData.length,
-      week3: filteredData.reduce((sum, item) => sum + item.week3, 0) / filteredData.length,
-      week4: filteredData.reduce((sum, item) => sum + item.week4, 0) / filteredData.length,
+      totalAssets: view.reduce((s, x) => s + x.totalAssets, 0),
+      hits: view.reduce((s, x) => s + x.hits, 0),
+      week1: view.reduce((s, x) => s + x.week1, 0) / n,
+      week2: view.reduce((s, x) => s + x.week2, 0) / n,
+      week3: view.reduce((s, x) => s + x.week3, 0) / n,
+      week4: view.reduce((s, x) => s + x.week4, 0) / n,
     };
-  }, [filteredData]);
+  }, [view]);
 
-  const resetFilters = () => {
-    setFilters({
-      week: 'All',
-      editor: 'All',
-      painPoint: 'All',
-      product: 'All',
-      production: 'All',
-      adType: 'All',
-      format: 'All',
-      landingPage: 'All',
-      purchaseThreshold: 'All'
-    });
-    setSearchTerm('');
-  };
 
-  const updateFilter = (key: keyof FilterState, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-  };
+  if (error)   return <div className="p-6 text-red-600">Error: {error}</div>;
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 transition-colors">
-      {/* Left Sidebar - Filters */}
       <div className="w-80 bg-white dark:bg-slate-900/40 border-r border-gray-200 dark:border-slate-700/60 overflow-y-auto">
-        <div className="p-6">
-          {/* Header */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-2">
-              <Filter className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Filters</h2>
-            </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400">Refine your campaign data</p>
+        <div className="p-6 space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold">Filters</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-400">Apply before aggregation</p>
           </div>
 
-          {/* Search */}
-          <div className="mb-6">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500" />
-              <input
-                type="text"
-                placeholder="Search campaigns..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg
-                           bg-white text-gray-900 placeholder-gray-400
-                           focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                           dark:bg-slate-800 dark:text-slate-100 dark:placeholder-gray-500 dark:border-slate-700"
-              />
-            </div>
+          {/* Campaign filter */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Campaign (at launch)</label>
+            <select
+              className="w-full p-2 rounded-lg border border-gray-200 dark:border-slate-700 dark:bg-slate-800"
+              value={campaignFilter}
+              onChange={e => setCampaignFilter(e.target.value)}
+            >
+              {campaignOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
           </div>
 
-          {/* Reset Button */}
-          <button
-            onClick={resetFilters}
-            className="w-full mb-6 flex items-center justify-center gap-2 py-2 px-4
-                       bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors
-                       dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-100"
-          >
-            <RotateCcw className="w-4 h-4" />
-            Reset All Filters
-          </button>
-
-          {/* Filter Controls */}
-          <div className="space-y-4">
-            {/* (FilterSelect components unchanged; they already have dark classes) */}
-            <FilterSelect label="Week" value={filters.week} onChange={(v) => updateFilter('week', v)} options={filterOptions.week} />
-            <FilterSelect label="Editor" value={filters.editor} onChange={(v) => updateFilter('editor', v)} options={filterOptions.editor} />
-            <FilterSelect label="Pain Point" value={filters.painPoint} onChange={(v) => updateFilter('painPoint', v)} options={filterOptions.painPoint} />
-            <FilterSelect label="Product" value={filters.product} onChange={(v) => updateFilter('product', v)} options={filterOptions.product} />
-            <FilterSelect label="Production" value={filters.production} onChange={(v) => updateFilter('production', v)} options={filterOptions.production} />
-            <FilterSelect label="Ad Type" value={filters.adType} onChange={(v) => updateFilter('adType', v)} options={filterOptions.adType} />
-            <FilterSelect label="Format" value={filters.format} onChange={(v) => updateFilter('format', v)} options={filterOptions.format} />
-            <FilterSelect label="Landing Page" value={filters.landingPage} onChange={(v) => updateFilter('landingPage', v)} options={filterOptions.landingPage} />
-            <FilterSelect label="Purchase Threshold" value={filters.purchaseThreshold} onChange={(v) => updateFilter('purchaseThreshold', v)} options={filterOptions.purchaseThreshold} />
-          </div>
-
-          {/* Active Filters Count */}
-          <div className="mt-6 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-            <div className="text-sm text-blue-800 dark:text-blue-300">
-              <span className="font-medium">{filteredData.length}</span> campaigns match your filters
-            </div>
+          {/* Ad filter */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Ad (at launch)</label>
+            <select
+              className="w-full p-2 rounded-lg border border-gray-200 dark:border-slate-700 dark:bg-slate-800"
+              value={adFilter}
+              onChange={e => setAdFilter(e.target.value)}
+            >
+              {adOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
           </div>
         </div>
       </div>
 
-      {/* Right Content - Dashboard */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
+        {/* header */}
         <div className="bg-white dark:bg-slate-900/40 border-b border-gray-200 dark:border-slate-700 px-6 py-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Facebook Ads Dashboard</h1>
-              <p className="text-gray-600 dark:text-gray-400 mt-1">Monitor campaign performance across time periods</p>
+              <h1 className="text-2xl font-bold">Facebook Cohorts</h1>
+              <p className="text-gray-600 dark:text-gray-400 mt-1">
+                Cumulative hit% by launch cohort week (filters applied before aggregation)
+              </p>
             </div>
-            <div className="flex items-center gap-3">
-              <ThemeToggle />
-              <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors
-                                 dark:bg-blue-500 dark:hover:bg-blue-600">
-                Export Data
-              </button>
-            </div>
+            <ThemeToggle />
           </div>
         </div>
 
-        {/* Stats Cards */}
+        {/* cards */}
         <div className="bg-white dark:bg-slate-900/40 border-b border-gray-200 dark:border-slate-700 px-6 py-4">
           <div className="grid grid-cols-4 gap-4">
             <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{totals.totalAssets}</div>
+              <div className="text-2xl font-bold">{totals.totalAssets}</div>
               <div className="text-sm text-gray-600 dark:text-gray-400">Total Assets</div>
             </div>
             <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-              <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{totals.hits}</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Total Hits</div>
+              <div className="text-2xl font-bold">{totals.hits}</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Approx Hits (wk4)</div>
             </div>
             <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
               <div className="text-2xl font-bold text-green-600 dark:text-green-400">{totals.week1.toFixed(1)}%</div>
@@ -283,58 +297,63 @@ const FacebookAdsDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Table */}
+        {/* table */}
         <div className="flex-1 overflow-auto">
           <div className="bg-white dark:bg-slate-900/40">
             <table className="w-full">
               <thead className="bg-gray-900 text-white dark:bg-slate-800 sticky top-0">
                 <tr>
-                  <th className="px-4 py-3 text-left text-sm font-medium">Date</th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">Cohort Week (Mon)</th>
                   <th className="px-4 py-3 text-left text-sm font-medium">Assets</th>
-                  <th className="px-4 py-3 text-left text-sm font-medium">Hits</th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">Hits (wk4 est)</th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
                     Week 1 (+7)
-                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: &lt; 10%</div>
+                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: ≥10%</div>
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
                     Week 2 (+14)
-                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: &lt; 20%</div>
+                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: ≥20%</div>
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
                     Week 3 (+21)
-                    <div className="text-xs text-gray-300 dark:text-gray-400">Target &lt; 25%</div>
+                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: ≥25%</div>
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
                     Week 4 (+28)
-                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: &lt; 25%</div>
+                    <div className="text-xs text-gray-300 dark:text-gray-400">Target: ≥25%</div>
                   </th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredData.map((row, index) => {
-                  const nextRow = filteredData[index + 1];
-                  return (
-                    <tr key={row.date} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/60">
-                      <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{row.date}</td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{row.totalAssets}</td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{row.hits}</td>
-                      <PerformanceCell current={row.week1} previous={nextRow?.week1 || 0} target={10} />
-                      <PerformanceCell current={row.week2} previous={nextRow?.week2 || 0} target={20} />
-                      <PerformanceCell current={row.week3} previous={nextRow?.week3 || 0} target={25} />
-                      <PerformanceCell current={row.week4} previous={nextRow?.week4 || 0} target={25} />
-                    </tr>
-                  );
-                })}
-                <tr className="bg-gray-100 dark:bg-slate-800 font-semibold border-t-2 border-gray-300 dark:border-slate-700">
-                  <td className="px-4 py-3">Total</td>
-                  <td className="px-4 py-3">{totals.totalAssets}</td>
-                  <td className="px-4 py-3">{totals.hits}</td>
-                  <td className="px-4 py-3">{totals.week1.toFixed(1)}%</td>
-                  <td className="px-4 py-3">{totals.week2.toFixed(1)}%</td>
-                  <td className="px-4 py-3">{totals.week3.toFixed(1)}%</td>
-                  <td className="px-4 py-3">{totals.week4.toFixed(1)}%</td>
-                </tr>
-              </tbody>
+             <tbody>
+  {loading ? (
+    <SkeletonRows rows={6} cols={7} />
+  ) : view.length === 0 ? (
+    <tr>
+      <td colSpan={7} className="px-4 py-6 text-center text-gray-500 dark:text-gray-400">
+        No cohort rows
+      </td>
+    </tr>
+  ) : (
+    view.map((row) => {
+ 
+      return (
+        <tr
+          key={row.cohortISO}
+          className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/60"
+        >
+          <td className="px-4 py-3 font-medium">{row.date}</td>
+          <td className="px-4 py-3">{row.totalAssets}</td>
+          <td className="px-4 py-3">{row.hits}</td>
+          <PerformanceCell current={row.week1} previous={0} target={10} />
+          <PerformanceCell current={row.week2} previous={row.week1} target={20} />
+          <PerformanceCell current={row.week3} previous={row.week2} target={25} />
+          <PerformanceCell current={row.week4} previous={row.week3} target={25} />
+        </tr>
+      );
+    })
+  )}
+</tbody>
+
             </table>
           </div>
         </div>
@@ -344,4 +363,7 @@ const FacebookAdsDashboard: React.FC = () => {
   );
 };
 
-export default FacebookAdsDashboard;
+export default CohortDashboard;
+
+
+
