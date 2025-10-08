@@ -77,7 +77,7 @@ const CohortDashboard: React.FC = () => {
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch("http://localhost:8000/api/ad-weeks"); // <- your API
+        const res = await fetch("https://facebook-ads-backend-mln8.onrender.com/api/ad-weeks"); // <- your API
         if (!res.ok) throw new Error(`/api/ad-weeks ${res.status}`);
         const json: ApiPayload = await res.json();
         setRaw(json.rows || []);
