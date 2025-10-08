@@ -112,16 +112,6 @@ const CohortDashboard: React.FC = () => {
     });
   }, [raw, campaignFilter, adFilter]);
 
-const addDays = (iso: string, days: number) => {
-  const d = new Date(iso + "T00:00:00Z"); // treat cohort_week as UTC midnight
-  d.setUTCDate(d.getUTCDate() + days);
-  return d;
-};
-const isOnOrAfterToday = (d: Date) => {
-  const today = new Date();
-  const t = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  return d.getTime() <= t.getTime();
-};
 
 // aggregate ad-week rows → cohort grid (future weeks = 0)
 const view: CohortRowView[] = useMemo(() => {
@@ -176,11 +166,6 @@ const view: CohortRowView[] = useMemo(() => {
     const c3 = eligible[3] ? cumSets[3].size : 0;
     const c4 = eligible[4] ? cumSets[4].size : 0;
 
-    // Incremental "hike" per week (counts), never negative
-    const inc1 = c1;
-    const inc2 = Math.max(c2 - c1, 0);
-    const inc3 = Math.max(c3 - c2, 0);
-    const inc4 = Math.max(c4 - c3, 0);
 
     // Convert to percentages for your cells
    const p1 = Math.round((c1 / totalAssets) * 1000) / 10;
