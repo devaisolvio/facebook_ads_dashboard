@@ -68,10 +68,14 @@ const CohortDashboard: React.FC = () => {
   const [raw, setRaw] = useState<AdWeekRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
+  const editors = [ "Tina","Tris","All"]
+  const angles = ["All","Money","General"]
 
   // filters
   const [campaignFilter, setCampaignFilter] = useState<string>("All");
   const [adFilter, setAdFilter] = useState<string>("All");
+  const [editorFilter, setEditorFilter] = useState<string>("All")
+  const [anglesFilter, setAnglesFilter] = useState<string>("All");
 
   useEffect(() => {
     (async () => {
@@ -103,14 +107,17 @@ const CohortDashboard: React.FC = () => {
     return Array.from(set).sort((a,b) => (a==="All"?-1: b==="All"?1 : a.localeCompare(b)));
   }, [raw]);
 
+
   // apply filters BEFORE aggregation
   const filtered = useMemo(() => {
     return raw.filter(r => {
       const okCampaign = campaignFilter === "All" || r.campaign_name_at_launch === campaignFilter;
       const okAd = adFilter === "All" || r.ad_name_at_launch === adFilter;
-      return okCampaign && okAd;
+      const okEditor = editorFilter ==="All" || r.ad_name_at_launch.includes(editorFilter)
+      const okAngles= anglesFilter ==="All" || r.ad_name_at_launch.includes(anglesFilter)
+      return okCampaign && okAd && okEditor && okAngles;
     });
-  }, [raw, campaignFilter, adFilter]);
+  }, [raw, campaignFilter, adFilter,editorFilter,anglesFilter]);
 
 
 // aggregate ad-week rows → cohort grid (future weeks = 0)
@@ -161,33 +168,31 @@ const view: CohortRowView[] = useMemo(() => {
     });
 
     // Cumulative counts (respect eligibility; future weeks treated as 0)
-    const c1 = eligible[1] ? cumSets[1].size : 0;
-    const c2 = eligible[2] ? cumSets[2].size : 0;
-    const c3 = eligible[3] ? cumSets[3].size : 0;
-    const c4 = eligible[4] ? cumSets[4].size : 0;
+const c1 = eligible[1] ? cumSets[1].size : 0;
+const c2 = eligible[2] ? cumSets[2].size : 0;
+const c3 = eligible[3] ? cumSets[3].size : 0;
+const c4 = eligible[4] ? cumSets[4].size : 0;
 
-
-    // Convert to percentages for your cells
-   const p1 = Math.round((c1 / totalAssets) * 1000) / 10;
+// week % (cumulative) using filtered denominator
+const p1 = Math.round((c1 / totalAssets) * 1000) / 10;
 const p2 = Math.round((c2 / totalAssets) * 1000) / 10;
 const p3 = Math.round((c3 / totalAssets) * 1000) / 10;
 const p4 = Math.round((c4 / totalAssets) * 1000) / 10;
 
-    // Total hits = cumulative count at latest eligible week
-    const latestHits = eligible[4] ? c4 : eligible[3] ? c3 : eligible[2] ? c2 : eligible[1] ? c1 : 0;
+// ✅ latest eligible cumulative, NOT sum
+const latestWk = eligible[4] ? 4 : eligible[3] ? 3 : eligible[2] ? 2 : eligible[1] ? 1 : 0;
+const latestHits = latestWk ? cumSets[latestWk].size : 0;
 
-    out.push({
-      cohortISO: cohort,
-      date: fmtDate(cohort),
-      totalAssets,
-      hits: latestHits,         // exact integer, not pct * denom
-      week1: eligible[1] ? p1 : 0,  // weekly *increment* %
-      week2: eligible[2] ? p2 : 0,
-      week3: eligible[3] ? p3 : 0,
-      week4: eligible[4] ? p4 : 0,
-    });
-  }
-
+out.push({
+  cohortISO: cohort,
+  date: fmtDate(cohort),
+  totalAssets,           // filtered denominator
+  hits: latestHits,      // filtered hits (unique ads that have ever hit so far)
+  week1: eligible[1] ? p1 : 0,
+  week2: eligible[2] ? p2 : 0,
+  week3: eligible[3] ? p3 : 0,
+  week4: eligible[4] ? p4 : 0,
+})}
   out.sort((a, b) => b.cohortISO.localeCompare(a.cohortISO));
   return out;
 }, [filtered]);
@@ -195,18 +200,28 @@ const p4 = Math.round((c4 / totalAssets) * 1000) / 10;
 
 
   // top cards
-  const totals = useMemo(() => {
-    if (view.length === 0) return { totalAssets: 0, hits: 0, week1: 0, week2: 0, week3: 0, week4: 0 };
-    const n = view.length;
-    return {
-      totalAssets: view.reduce((s, x) => s + x.totalAssets, 0),
-      hits: view.reduce((s, x) => s + x.hits, 0),
-      week1: view.reduce((s, x) => s + x.week1, 0) / n,
-      week2: view.reduce((s, x) => s + x.week2, 0) / n,
-      week3: view.reduce((s, x) => s + x.week3, 0) / n,
-      week4: view.reduce((s, x) => s + x.week4, 0) / n,
-    };
-  }, [view]);
+const totals = useMemo(() => {
+  if (view.length === 0) {
+    return { totalAssets: 0, hits: 0, week1: 0, week2: 0, week3: 0, week4: 0 };
+  }
+  const assetsSum = view.reduce((s, x) => s + x.totalAssets, 0);
+  const hitsSum   = view.reduce((s, x) => s + x.hits, 0);
+
+  const w = (key: 'week1' | 'week2' | 'week3' | 'week4') =>
+    assetsSum
+      ? view.reduce((s, x) => s + x[key] * x.totalAssets, 0) / assetsSum
+      : 0;
+
+  return {
+    totalAssets: assetsSum,
+    hits: hitsSum,
+    week1: w('week1'),
+    week2: w('week2'),
+    week3: w('week3'),
+    week4: w('week4'),
+  };
+}, [view]);
+
 
 
   if (error)   return <div className="p-6 text-red-600">Error: {error}</div>;
@@ -243,6 +258,28 @@ const p4 = Math.round((c4 / totalAssets) * 1000) / 10;
               {adOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           </div>
+          {/* Editor Filters */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Editor Name</label>
+            <select
+              className="w-full p-2 rounded-lg border border-gray-200 dark:border-slate-700 dark:bg-slate-800"
+              value={editorFilter}
+              onChange={e => setEditorFilter(e.target.value)}
+            >
+              {editors.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
+          {/* Anlges Filters */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Breakdown Angles</label>
+            <select
+              className="w-full p-2 rounded-lg border border-gray-200 dark:border-slate-700 dark:bg-slate-800"
+              value={anglesFilter}
+              onChange={e => setAnglesFilter(e.target.value)}
+            >
+              {angles.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -265,7 +302,7 @@ const p4 = Math.round((c4 / totalAssets) * 1000) / 10;
           <div className="grid grid-cols-4 gap-4">
             <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
               <div className="text-2xl font-bold">{totals.totalAssets}</div>
-              <div className="text-sm text-gray-600 dark:text-gray-400">Total Assets</div>
+              <div className="text-sm text-gray-600 dark:text-gray-400">Total Adsets</div>
             </div>
             <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
               <div className="text-2xl font-bold">{totals.hits}</div>
@@ -288,8 +325,8 @@ const p4 = Math.round((c4 / totalAssets) * 1000) / 10;
             <table className="w-full">
               <thead className="bg-gray-900 text-white dark:bg-slate-800 sticky top-0">
                 <tr>
-                  <th className="px-4 py-3 text-left text-sm font-medium">Cohort Week (Mon)</th>
-                  <th className="px-4 py-3 text-left text-sm font-medium">Assets</th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">Cohort Week </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">Adsets</th>
                   <th className="px-4 py-3 text-left text-sm font-medium">Hits (wk4 est)</th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
                     Week 1 (+7)
