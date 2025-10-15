@@ -68,14 +68,18 @@ const CohortDashboard: React.FC = () => {
   const [raw, setRaw] = useState<AdWeekRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
-  const editors = [ "Tina","Tris","All"]
+  const editors = [ "Tris","All"]
   const angles = ["All","Money","General"]
+  const creative = ["All","Lucia"]
+  const videoType = ["GIF","IMG","All","Video"]
 
   // filters
   const [campaignFilter, setCampaignFilter] = useState<string>("All");
   const [adFilter, setAdFilter] = useState<string>("All");
   const [editorFilter, setEditorFilter] = useState<string>("All")
   const [anglesFilter, setAnglesFilter] = useState<string>("All");
+  const [creativeFilter, setCreativeFilter] = useState<string>("All");
+  const [typeFilter, setTypeFilter] = useState<string>("All");
 
   useEffect(() => {
     (async () => {
@@ -115,9 +119,11 @@ const CohortDashboard: React.FC = () => {
       const okAd = adFilter === "All" || r.ad_name_at_launch === adFilter;
       const okEditor = editorFilter ==="All" || r.ad_name_at_launch.includes(editorFilter)
       const okAngles= anglesFilter ==="All" || r.ad_name_at_launch.includes(anglesFilter)
-      return okCampaign && okAd && okEditor && okAngles;
+      const okCreative = creativeFilter === "All" || r.ad_name_at_launch.includes(creativeFilter)
+      const videoType = typeFilter === "All" || typeFilter === "Video"   || r.ad_name_at_launch.includes(typeFilter)
+      return okCampaign && okAd && okEditor && okAngles && okCreative && videoType;
     });
-  }, [raw, campaignFilter, adFilter,editorFilter,anglesFilter]);
+  }, [raw, campaignFilter, adFilter,editorFilter,anglesFilter,creativeFilter,typeFilter]);
 
 
 // aggregate ad-week rows → cohort grid (future weeks = 0)
@@ -278,6 +284,28 @@ const totals = useMemo(() => {
               onChange={e => setAnglesFilter(e.target.value)}
             >
               {angles.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
+          {/* Creative Filter */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Creative Strategists</label>
+            <select
+              className="w-full p-2 rounded-lg border border-gray-200 dark:border-slate-700 dark:bg-slate-800"
+              value={creativeFilter}
+              onChange={e => setCreativeFilter(e.target.value)}
+            >
+              {creative.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+            </select>
+          </div>
+          {/* Video Type Filter */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Ad Type </label>
+            <select
+              className="w-full p-2 rounded-lg border border-gray-200 dark:border-slate-700 dark:bg-slate-800"
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+            >
+              {videoType.map(opt => <option key={opt} value={opt}>{opt}</option>)}
             </select>
           </div>
         </div>
