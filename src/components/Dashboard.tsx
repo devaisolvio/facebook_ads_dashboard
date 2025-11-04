@@ -111,39 +111,44 @@ const CohortDashboard: React.FC = () => {
     return Array.from(set).sort((a,b) => (a==="All"?-1: b==="All"?1 : a.localeCompare(b)));
   }, [raw]);
 
-console.log(raw);
-  // apply filters BEFORE aggregation
 const filtered = useMemo(() => {
-  const fEditor  = editorFilter?.toLowerCase?.() ?? "all";
-  const fAngles  = anglesFilter?.toLowerCase?.() ?? "all";
-  const fCreative= creativeFilter?.toLowerCase?.() ?? "all";
-  const fType    = typeFilter?.toLowerCase?.() ?? "all";
+  const fEditor    = editorFilter?.toLowerCase?.() ?? "all";
+  const fAngles    = anglesFilter?.toLowerCase?.() ?? "all";
+  const fCreative  = creativeFilter?.toLowerCase?.() ?? "all";
+  const fType      = typeFilter?.toLowerCase?.() ?? "all";
+
+  const adNameFiltersActive =
+    (adFilter && adFilter !== "All") ||
+    (editorFilter && editorFilter !== "All") ||
+    (anglesFilter && anglesFilter !== "All") ||
+    (creativeFilter && creativeFilter !== "All") ||
+    (typeFilter && typeFilter !== "All" && typeFilter !== "Video");
 
   return raw.filter(r => {
     const campaign = r.campaign_name_at_launch;
-    const nameRaw  = r.ad_name_at_launch;
-    const hasName  = !!nameRaw;
-    const name     = nameRaw?.toLowerCase();
+    const nameRaw  = r.ad_name_at_launch ?? "";
+    const name     = nameRaw.toLowerCase();
+    const hasName  = !!nameRaw.trim();
 
-    // Campaign filter (unchanged; add a null guard if needed)
+    // If any ad-name–based filter is applied, require a name.
+    if (adNameFiltersActive && !hasName) return false;
+
     const okCampaign = campaignFilter === "All" || campaign === campaignFilter;
 
-    // Exact ad-name filter — if there’s no name, don’t filter it out
-    const okAd = adFilter === "All" || !hasName || nameRaw === adFilter;
-
-    const okEditor   = editorFilter === "All"   || !hasName || name.includes(fEditor);
-    const okAngles   = anglesFilter === "All"   || !hasName || name.includes(fAngles);
-    const okCreative = creativeFilter === "All" || !hasName || name.includes(fCreative);
-
-    const okType =
+    // Only evaluated when respective filter is active; otherwise trivially true
+    const okAd       = adFilter === "All"       || nameRaw === adFilter;
+    const okEditor   = editorFilter === "All"   || name.includes(fEditor);
+    const okAngles   = anglesFilter === "All"   || name.includes(fAngles);
+    const okCreative = creativeFilter === "All" || name.includes(fCreative);
+    const okType     =
       typeFilter === "All" ||
       typeFilter === "Video" ||
-      !hasName ||
       name.includes(fType);
 
     return okCampaign && okAd && okEditor && okAngles && okCreative && okType;
   });
 }, [raw, campaignFilter, adFilter, editorFilter, anglesFilter, creativeFilter, typeFilter]);
+
 
 
 
