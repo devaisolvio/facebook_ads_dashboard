@@ -113,20 +113,38 @@ const CohortDashboard: React.FC = () => {
 
 console.log(raw);
   // apply filters BEFORE aggregation
-  const filtered = useMemo(() => {
-    return raw.filter(r => {
+const filtered = useMemo(() => {
+  const fEditor  = editorFilter?.toLowerCase?.() ?? "all";
+  const fAngles  = anglesFilter?.toLowerCase?.() ?? "all";
+  const fCreative= creativeFilter?.toLowerCase?.() ?? "all";
+  const fType    = typeFilter?.toLowerCase?.() ?? "all";
 
-      if(r.ad_name_at_launch){
-      const okCampaign = campaignFilter === "All" || r.campaign_name_at_launch === campaignFilter;
-      const okAd = adFilter === "All" || r.ad_name_at_launch === adFilter;
-      const okEditor = editorFilter ==="All" || r.ad_name_at_launch.includes(editorFilter)
-      const okAngles= anglesFilter ==="All" || r.ad_name_at_launch.includes(anglesFilter)
-      const okCreative = creativeFilter === "All" || r.ad_name_at_launch.includes(creativeFilter)
-      const videoType = typeFilter === "All" || typeFilter === "Video"   || r.ad_name_at_launch.includes(typeFilter)
-      return okCampaign && okAd && okEditor && okAngles && okCreative && videoType;
-      }
-    });
-  }, [raw, campaignFilter, adFilter,editorFilter,anglesFilter,creativeFilter,typeFilter]);
+  return raw.filter(r => {
+    const campaign = r.campaign_name_at_launch;
+    const nameRaw  = r.ad_name_at_launch;
+    const hasName  = !!nameRaw;
+    const name     = nameRaw?.toLowerCase();
+
+    // Campaign filter (unchanged; add a null guard if needed)
+    const okCampaign = campaignFilter === "All" || campaign === campaignFilter;
+
+    // Exact ad-name filter — if there’s no name, don’t filter it out
+    const okAd = adFilter === "All" || !hasName || nameRaw === adFilter;
+
+    const okEditor   = editorFilter === "All"   || !hasName || name.includes(fEditor);
+    const okAngles   = anglesFilter === "All"   || !hasName || name.includes(fAngles);
+    const okCreative = creativeFilter === "All" || !hasName || name.includes(fCreative);
+
+    const okType =
+      typeFilter === "All" ||
+      typeFilter === "Video" ||
+      !hasName ||
+      name.includes(fType);
+
+    return okCampaign && okAd && okEditor && okAngles && okCreative && okType;
+  });
+}, [raw, campaignFilter, adFilter, editorFilter, anglesFilter, creativeFilter, typeFilter]);
+
 
 
 // aggregate ad-week rows → cohort grid (future weeks = 0)
