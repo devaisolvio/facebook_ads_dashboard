@@ -85,7 +85,7 @@ const CohortDashboard: React.FC = () => {
     (async () => {
       try {
         setLoading(true);
-        const res = await fetch("https://facebook-ads-backend-mln8.onrender.com/api/ad-weeks"); // <- your API
+        const res = await fetch("http://localhost:8000/api/ad-weeks"); // <- your API
         if (!res.ok) throw new Error(`/api/ad-weeks ${res.status}`);
         const json: ApiPayload = await res.json();
         setRaw(json.rows || []);
@@ -111,10 +111,12 @@ const CohortDashboard: React.FC = () => {
     return Array.from(set).sort((a,b) => (a==="All"?-1: b==="All"?1 : a.localeCompare(b)));
   }, [raw]);
 
-
+console.log(raw);
   // apply filters BEFORE aggregation
   const filtered = useMemo(() => {
     return raw.filter(r => {
+
+      if(r.ad_name_at_launch){
       const okCampaign = campaignFilter === "All" || r.campaign_name_at_launch === campaignFilter;
       const okAd = adFilter === "All" || r.ad_name_at_launch === adFilter;
       const okEditor = editorFilter ==="All" || r.ad_name_at_launch.includes(editorFilter)
@@ -122,6 +124,7 @@ const CohortDashboard: React.FC = () => {
       const okCreative = creativeFilter === "All" || r.ad_name_at_launch.includes(creativeFilter)
       const videoType = typeFilter === "All" || typeFilter === "Video"   || r.ad_name_at_launch.includes(typeFilter)
       return okCampaign && okAd && okEditor && okAngles && okCreative && videoType;
+      }
     });
   }, [raw, campaignFilter, adFilter,editorFilter,anglesFilter,creativeFilter,typeFilter]);
 
